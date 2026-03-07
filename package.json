@@ -1,0 +1,12 @@
+{
+  "name": "suomi-energy-grid",
+  "version": "1.0.0",
+  "description": "Finland real-time energy dashboard using Fingrid Open Data",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
