@@ -649,16 +649,16 @@ async function fetchAll() {
   const { start, end } = getDateRange();
 
   try {
-    const [consumption, production, nuclear, wind, hydro, solar, chpd, chpi] = await Promise.all([
-      fetchDataset(DS.consumption, start, end),
-      fetchDataset(DS.production,  start, end),
-      fetchDataset(DS.nuclear,     start, end),
-      fetchDataset(DS.wind,        start, end),
-      fetchDataset(DS.hydro,       start, end),
-      fetchDataset(DS.solar,       start, end),
-      fetchDataset(DS.chp_district,start, end),
-      fetchDataset(DS.chp_industry,start, end),
-    ]);
+    // Stagger requests to stay under Fingrid's 10/min rate limit
+    const delay = ms => new Promise(r => setTimeout(r, ms));
+    const consumption = await fetchDataset(DS.consumption, start, end); await delay(700);
+    const production  = await fetchDataset(DS.production,  start, end); await delay(700);
+    const nuclear     = await fetchDataset(DS.nuclear,     start, end); await delay(700);
+    const wind        = await fetchDataset(DS.wind,        start, end); await delay(700);
+    const hydro       = await fetchDataset(DS.hydro,       start, end); await delay(700);
+    const solar       = await fetchDataset(DS.solar,       start, end); await delay(700);
+    const chpd        = await fetchDataset(DS.chp_district,start, end); await delay(700);
+    const chpi        = await fetchDataset(DS.chp_industry,start, end);
 
     // KPIs
     const fmt = v => v != null ? Math.round(v).toLocaleString() : '—';
@@ -692,7 +692,7 @@ setDefaultDates();
 fetchAll();
 
 // Auto-refresh every 3 minutes
-setInterval(fetchAll, 3 * 60 * 1000);
+setInterval(fetchAll, 5 * 60 * 1000);
 </script>
 </body>
 </html>
