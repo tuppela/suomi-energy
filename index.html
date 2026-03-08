@@ -651,13 +651,13 @@ async function fetchAll() {
   try {
     // Stagger requests to stay under Fingrid's 10/min rate limit
     const delay = ms => new Promise(r => setTimeout(r, ms));
-    const consumption = await fetchDataset(DS.consumption, start, end); await delay(700);
-    const production  = await fetchDataset(DS.production,  start, end); await delay(700);
-    const nuclear     = await fetchDataset(DS.nuclear,     start, end); await delay(700);
-    const wind        = await fetchDataset(DS.wind,        start, end); await delay(700);
-    const hydro       = await fetchDataset(DS.hydro,       start, end); await delay(700);
-    const solar       = await fetchDataset(DS.solar,       start, end); await delay(700);
-    const chpd        = await fetchDataset(DS.chp_district,start, end); await delay(700);
+    const consumption = await fetchDataset(DS.consumption, start, end); await delay(1200);
+    const production  = await fetchDataset(DS.production,  start, end); await delay(1200);
+    const nuclear     = await fetchDataset(DS.nuclear,     start, end); await delay(1200);
+    const wind        = await fetchDataset(DS.wind,        start, end); await delay(1200);
+    const hydro       = await fetchDataset(DS.hydro,       start, end); await delay(1200);
+    const solar       = await fetchDataset(DS.solar,       start, end); await delay(1200);
+    const chpd        = await fetchDataset(DS.chp_district,start, end); await delay(1200);
     const chpi        = await fetchDataset(DS.chp_industry,start, end);
 
     // KPIs
