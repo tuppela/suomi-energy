@@ -641,7 +641,10 @@ function updateBalance(cons, prod) {
 }
 
 // --- Main fetch ---
+let isFetching = false;
 async function fetchAll() {
+  if (isFetching) return; // prevent overlapping fetches
+  isFetching = true;
   document.getElementById('fetchBtn').disabled = true;
   document.getElementById('statusBar').innerHTML = '<div class="spinner"></div><span id="statusText">Fetching data from Fingrid…</span>';
   document.getElementById('statusBar').className = 'status-bar';
@@ -651,13 +654,13 @@ async function fetchAll() {
   try {
     // Stagger requests to stay under Fingrid's 10/min rate limit
     const delay = ms => new Promise(r => setTimeout(r, ms));
-    const consumption = await fetchDataset(DS.consumption, start, end); await delay(1200);
-    const production  = await fetchDataset(DS.production,  start, end); await delay(1200);
-    const nuclear     = await fetchDataset(DS.nuclear,     start, end); await delay(1200);
-    const wind        = await fetchDataset(DS.wind,        start, end); await delay(1200);
-    const hydro       = await fetchDataset(DS.hydro,       start, end); await delay(1200);
-    const solar       = await fetchDataset(DS.solar,       start, end); await delay(1200);
-    const chpd        = await fetchDataset(DS.chp_district,start, end); await delay(1200);
+    const consumption = await fetchDataset(DS.consumption, start, end); await delay(1500);
+    const production  = await fetchDataset(DS.production,  start, end); await delay(1500);
+    const nuclear     = await fetchDataset(DS.nuclear,     start, end); await delay(1500);
+    const wind        = await fetchDataset(DS.wind,        start, end); await delay(1500);
+    const hydro       = await fetchDataset(DS.hydro,       start, end); await delay(1500);
+    const solar       = await fetchDataset(DS.solar,       start, end); await delay(1500);
+    const chpd        = await fetchDataset(DS.chp_district,start, end); await delay(1500);
     const chpi        = await fetchDataset(DS.chp_industry,start, end);
 
     // KPIs
@@ -684,6 +687,7 @@ async function fetchAll() {
     console.error(err);
   } finally {
     document.getElementById('fetchBtn').disabled = false;
+    isFetching = false;
   }
 }
 
