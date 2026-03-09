@@ -464,11 +464,14 @@ function setDefaultDates() {
 }
 
 // --- Fetch ---
-async function fetchDataset(id, start, end) {
-  const url = `${BASE}/${id}/data?startTime=${start}&endTime=${end}&pageSize=5000&sortOrder=asc`;
+async function fetchDataset(id) {
+  const url = `${BASE}/${id}/data`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Dataset ${id}: HTTP ${res.status}`);
   const json = await res.json();
+  // Show when cache was last updated
+  const cacheTime = res.headers.get('X-Cache-Updated');
+  if (cacheTime) window._cacheUpdated = new Date(cacheTime);
   return (json.data || []).map(d => ({ t: new Date(d.startTime), v: d.value }));
 }
 
@@ -653,19 +656,18 @@ async function fetchAll() {
   const { start, end } = getDateRange();
 
   try {
-    // Fetch sequentially - 6s apart guarantees we stay under 10/min
-    const delay = ms => new Promise(r => setTimeout(r, ms));
-    const datasets = [
-      DS.consumption, DS.production, DS.nuclear, DS.wind,
-      DS.hydro, DS.solar, DS.chp_district, DS.chp_industry
-    ];
-    const results = [];
-    for (let i = 0; i < datasets.length; i++) {
-      setStatus(`Loading dataset ${i + 1} of ${datasets.length}…`);
-      results.push(await fetchDataset(datasets[i], start, end));
-      if (i < datasets.length - 1) await delay(6500);
-    }
-    const [consumption, production, nuclear, wind, hydro, solar, chpd, chpi] = results;
+    // Fetch from server cache - all requests are instant, no rate limiting
+    setStatus('Loading from cache…');
+    const [consumption, production, nuclear, wind, hydro, solar, chpd, chpi] = await Promise.all([
+      fetchDataset(DS.consumption),
+      fetchDataset(DS.production),
+      fetchDataset(DS.nuclear),
+      fetchDataset(DS.wind),
+      fetchDataset(DS.hydro),
+      fetchDataset(DS.solar),
+      fetchDataset(DS.chp_district),
+      fetchDataset(DS.chp_industry),
+    ]);
 
     // KPIs
     const fmt = v => v != null ? Math.round(v).toLocaleString() : '—';
@@ -683,8 +685,9 @@ async function fetchAll() {
     buildRenewableChart(wind, solar);
 
     const pts = consumption.length;
-    document.getElementById('lastUpdated').textContent = `Updated ${new Date().toLocaleTimeString()} · ${pts} data points`;
-    setStatus(`✓ Loaded ${pts} consumption records · ${production.length} production records · ${start.slice(0,10)} → ${end.slice(0,10)}`);
+    const cacheStr = window._cacheUpdated ? `Cache updated ${window._cacheUpdated.toLocaleTimeString()}` : `Updated ${new Date().toLocaleTimeString()}`;
+    document.getElementById('lastUpdated').textContent = `${cacheStr} · ${pts} data points`;
+    setStatus(`✓ Loaded ${pts} consumption records · ${production.length} production records (last 3 days)`);
 
   } catch (err) {
     setStatus(err.message || 'Failed to fetch data. Check your API key or network.', true);
