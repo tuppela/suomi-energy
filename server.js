@@ -8,7 +8,7 @@ const API_KEY = process.env.FINGRID_API_KEY;
 const PORT = process.env.PORT || 3001;
 const CACHE_TTL = 5 * 60 * 1000;
 const FETCH_INTERVAL = 5 * 60 * 1000;
-const DATASET_IDS = [193, 74, 188, 75, 191, 248, 201, 202];
+const DATASET_IDS = [193, 74, 188, 75, 191, 248, 201, 202, 194, 87, 89, 90];
 const DELAY_MS = 7000;
 
 const cache = {

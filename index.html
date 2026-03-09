@@ -377,6 +377,30 @@
     </div>
   </div>
 
+  <!-- Cross-border flows -->
+  <div class="kpi-grid" style="margin-bottom:20px;">
+    <div class="kpi-card" style="border-top:2px solid #38bdf8;">
+      <div class="kpi-label">🇸🇪 Sweden (SE3)</div>
+      <div class="kpi-value" id="kpiSwedenC" style="color:#38bdf8;">—</div>
+      <div class="kpi-unit" id="kpiSwedenCDir">MW</div>
+    </div>
+    <div class="kpi-card" style="border-top:2px solid #38bdf8;">
+      <div class="kpi-label">🇸🇪 Sweden (SE1)</div>
+      <div class="kpi-value" id="kpiSwedenN" style="color:#38bdf8;">—</div>
+      <div class="kpi-unit" id="kpiSwedenNDir">MW</div>
+    </div>
+    <div class="kpi-card" style="border-top:2px solid #818cf8;">
+      <div class="kpi-label">🇪🇪 Estonia (EstLink)</div>
+      <div class="kpi-value" id="kpiEstonia" style="color:#818cf8;">—</div>
+      <div class="kpi-unit" id="kpiEstoniaDir">MW</div>
+    </div>
+    <div class="kpi-card" style="border-top:2px solid #f472b6;">
+      <div class="kpi-label">⚡ Net Import/Export</div>
+      <div class="kpi-value" id="kpiNetImport" style="color:#f472b6;">—</div>
+      <div class="kpi-unit" id="kpiNetDir">MW</div>
+    </div>
+  </div>
+
   <!-- Balance bar -->
   <div class="chart-card" style="margin-bottom:20px;">
     <div class="chart-title">Production vs Consumption Balance</div>
@@ -391,6 +415,13 @@
         <span>SURPLUS</span>
       </div>
     </div>
+  </div>
+
+  <!-- Cross-border flow chart -->
+  <div class="chart-card" style="margin-bottom:20px;">
+    <div class="chart-title">Cross-Border Power Flows</div>
+    <div class="chart-subtitle">MW · positive = export from Finland · negative = import to Finland</div>
+    <canvas id="flowChart"></canvas>
   </div>
 
   <div class="chart-grid">
@@ -432,6 +463,10 @@ const DS = {
   solar:       248,   // Solar power production
   chp_district:201,  // CHP district heating
   chp_industry: 202, // CHP industry
+  net_import:  194,   // Net import/export total
+  estonia:     87,    // Finland <-> Estonia (EstLink)
+  sweden_n:    89,    // Finland <-> Sweden SE1 (north)
+  sweden_c:    90,    // Finland <-> Sweden SE3 (central)
 };
 
 let charts = {};
@@ -644,6 +679,52 @@ function updateBalance(cons, prod) {
   document.getElementById('balanceLabel').style.color = surplus >= 0 ? 'var(--accent)' : 'var(--warn)';
 }
 
+function buildFlowChart(swedenC, swedenN, estonia) {
+  if (charts.flow) { charts.flow.destroy(); delete charts.flow; }
+  const sc = downsample(swedenC);
+  const sn = downsample(swedenN);
+  const ee = downsample(estonia);
+  charts.flow = new Chart(document.getElementById('flowChart'), {
+    type: 'line',
+    data: {
+      datasets: [
+        {
+          label: 'Sweden SE3',
+          data: sc.map(d => ({ x: d.t, y: d.v })),
+          borderColor: '#38bdf8',
+          backgroundColor: 'rgba(56,189,248,0.05)',
+          borderWidth: 2, pointRadius: 0, tension: 0.3, fill: true,
+        },
+        {
+          label: 'Sweden SE1',
+          data: sn.map(d => ({ x: d.t, y: d.v })),
+          borderColor: '#7dd3fc',
+          backgroundColor: 'rgba(125,211,252,0.05)',
+          borderWidth: 2, pointRadius: 0, tension: 0.3, fill: true,
+        },
+        {
+          label: 'Estonia',
+          data: ee.map(d => ({ x: d.t, y: d.v })),
+          borderColor: '#818cf8',
+          backgroundColor: 'rgba(129,140,248,0.05)',
+          borderWidth: 2, pointRadius: 0, tension: 0.3, fill: true,
+        },
+      ]
+    },
+    options: {
+      ...CHART_DEFAULTS,
+      plugins: {
+        ...CHART_DEFAULTS.plugins,
+        annotation: {
+          annotations: {
+            zero: { type: 'line', yMin: 0, yMax: 0, borderColor: 'rgba(255,255,255,0.15)', borderWidth: 1 }
+          }
+        }
+      }
+    }
+  });
+}
+
 // --- Main fetch ---
 let isFetching = false;
 async function fetchAll() {
@@ -658,7 +739,8 @@ async function fetchAll() {
   try {
     // Fetch from server cache - all requests are instant, no rate limiting
     setStatus('Loading from cache…');
-    const [consumption, production, nuclear, wind, hydro, solar, chpd, chpi] = await Promise.all([
+    const [consumption, production, nuclear, wind, hydro, solar, chpd, chpi,
+           netImport, estonia, swedenN, swedenC] = await Promise.all([
       fetchDataset(DS.consumption),
       fetchDataset(DS.production),
       fetchDataset(DS.nuclear),
@@ -667,6 +749,10 @@ async function fetchAll() {
       fetchDataset(DS.solar),
       fetchDataset(DS.chp_district),
       fetchDataset(DS.chp_industry),
+      fetchDataset(DS.net_import),
+      fetchDataset(DS.estonia),
+      fetchDataset(DS.sweden_n),
+      fetchDataset(DS.sweden_c),
     ]);
 
     // KPIs
@@ -676,6 +762,31 @@ async function fetchAll() {
     document.getElementById('kpiNuclear').textContent     = fmt(latest(nuclear));
     document.getElementById('kpiWind').textContent        = fmt(latest(wind));
 
+    // Cross-border KPIs
+    function flowLabel(v) {
+      if (v == null) return '—';
+      const abs = Math.abs(Math.round(v)).toLocaleString();
+      return v > 0 ? `+${abs}` : `-${abs}`;
+    }
+    function flowDir(v, exportLabel, importLabel) {
+      if (v == null) return 'MW';
+      return v > 0 ? `MW → ${exportLabel}` : v < 0 ? `MW ← ${importLabel}` : 'MW balanced';
+    }
+
+    const latSC = latest(swedenC);
+    const latSN = latest(swedenN);
+    const latEE = latest(estonia);
+    const latNI = latest(netImport);
+
+    document.getElementById('kpiSwedenC').textContent = flowLabel(latSC);
+    document.getElementById('kpiSwedenCDir').textContent = flowDir(latSC, 'export', 'import');
+    document.getElementById('kpiSwedenN').textContent = flowLabel(latSN);
+    document.getElementById('kpiSwedenNDir').textContent = flowDir(latSN, 'export', 'import');
+    document.getElementById('kpiEstonia').textContent = flowLabel(latEE);
+    document.getElementById('kpiEstoniaDir').textContent = flowDir(latEE, 'export', 'import');
+    document.getElementById('kpiNetImport').textContent = flowLabel(latNI);
+    document.getElementById('kpiNetDir').textContent = latNI > 0 ? 'MW net export' : latNI < 0 ? 'MW net import' : 'MW balanced';
+
     // Balance
     updateBalance(consumption, production);
 
@@ -683,6 +794,7 @@ async function fetchAll() {
     buildMainChart(consumption, production);
     buildMixChart(nuclear, wind, hydro, solar, chpd, chpi);
     buildRenewableChart(wind, solar);
+    buildFlowChart(swedenC, swedenN, estonia);
 
     const pts = consumption.length;
     const cacheStr = window._cacheUpdated ? `Cache updated ${window._cacheUpdated.toLocaleTimeString()}` : `Updated ${new Date().toLocaleTimeString()}`;
