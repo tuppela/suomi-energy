@@ -872,6 +872,7 @@ function setSource(src){
 // Energy wiring
 var energyRippleInterval=null, needsColorUpdate=false;
 window.applyEnergyTo3D=function(windMW,nuclearMW,solarMW,hydroMW,prodMW,consMW){
+  var surplus=prodMW-consMW;
   var ratio=consMW>0?Math.max(0.7,Math.min(1.5,1+surplus/consMW)):1;
   P.maxH=0.31*ratio;
   if(energyRippleInterval)clearInterval(energyRippleInterval);
