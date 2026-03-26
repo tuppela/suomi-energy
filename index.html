@@ -719,155 +719,121 @@ for(var r=0;r<ROWS;r++) for(var c=0;c<COLS;c++){
 var SPACING=0.195,PW=0.115;
 var GRID_W=(COLS-1)*SPACING,GRID_D=(ROWS-1)*SPACING;
 
-// ── Physics presets for each animation mode ──────────────────────────────────
-var PHYSICS={
-  load:    {damping:0.990, wave:0.041, ripple:0.5,  maxH:0.3},
-  settled: {damping:0.990, wave:0.0,   ripple:0.2,  maxH:0.3},
-  mode:    {damping:0.990, wave:0.041, ripple:0.5,  maxH:0.3},
-  tap:     {damping:0.994, wave:0.047, ripple:0.6,  maxH:0.3}
-};
-var GROW_DURATION=5.0; // seconds for pillars to reach full target height
+// ═══════════════════════════════════════════════════════
+// V5 — TWO-LAYER ARCHITECTURE
+// Layer 1: staticH[] — per-cell target heights, no physics
+// Layer 2: wave cur[]/vel[] — additive displacement only
+//          triggered by data refresh or tap, then decays
+// ═══════════════════════════════════════════════════════
 
-// Active physics (start with load preset)
-var P={damping:0.990, waveSpeed:0.041, ripple:0.5, maxH:0.3};
+// Single physics config — one mode only
+var P={damping:0.99, waveSpeed:0.041, rippleForce:0.5, maxH:0.31};
+var GROW_DURATION=5.0; // seconds to reach full target height
+
+// Wave buffers
 var cur=new Float32Array(COLS*ROWS), vel=new Float32Array(COLS*ROWS);
 
-// ── Geographic production maps ────────────────────────────────────────────────
-// Each entry: [col, row, weight 0-1]  (grid coords within 54×104 mask)
-// col: 0=west, 53=east  |  row: 0=north, 103=south
+// Static height buffer — what each pillar "wants" to be
+var staticH=new Float32Array(COLS*ROWS);
+// Grow progress per cell 0→1
+var growProg=new Float32Array(COLS*ROWS);
+// Current displayed height per cell
+var displayH=new Float32Array(COLS*ROWS);
+for(var i=0;i<COLS*ROWS;i++) displayH[i]=0.008;
+
+// ── Geographic production anchors ─────────────────────
 var GEO={
-  // Wind: west coast corridor (Pori/Rauma, Vaasa, Oulu) + Lapland
   wind:[
-    [8,85,1.0],[9,84,0.9],[10,86,0.85],   // Pori / Rauma area (SW coast)
-    [7,70,0.9],[8,71,0.85],[9,69,0.8],    // Vaasa corridor
-    [10,55,0.8],[11,54,0.75],[9,56,0.7],  // Oulu / Kalajoki
-    [14,30,0.7],[15,28,0.65],[16,32,0.6], // Lapland west
-    [22,20,0.5],[20,22,0.45]              // Lapland north
+    [8,85,1.0],[9,84,0.9],[10,86,0.85],
+    [7,70,0.9],[8,71,0.85],[9,69,0.8],
+    [10,55,0.8],[11,54,0.75],[9,56,0.7],
+    [14,30,0.7],[15,28,0.65],[16,32,0.6],
+    [22,20,0.5],[20,22,0.45]
   ],
-  // Nuclear: Olkiluoto (SW coast) + Loviisa (south coast)
   nuclear:[
-    [8,82,1.0],[9,81,0.95],[8,83,0.9],   // Olkiluoto (near Rauma)
-    [32,92,1.0],[33,91,0.95],[31,93,0.9] // Loviisa (south coast)
+    [8,82,1.0],[9,81,0.95],[8,83,0.9],
+    [32,92,1.0],[33,91,0.95],[31,93,0.9]
   ],
-  // Hydro: major rivers — Kemijoki (Lapland), Oulujoki, Vuoksi (east), Kokemäenjoki
   hydro:[
-    [20,15,1.0],[22,18,0.9],[18,20,0.85], // Kemijoki / Lapland
-    [24,12,0.8],[26,10,0.75],             // Northern Lapland
-    [16,48,0.8],[17,50,0.75],[15,52,0.7], // Oulujoki
-    [38,65,0.85],[40,68,0.8],[42,70,0.75],// Vuoksi / east Finland
-    [12,78,0.7],[13,80,0.65]              // Kokemäenjoki
+    [20,15,1.0],[22,18,0.9],[18,20,0.85],
+    [24,12,0.8],[26,10,0.75],
+    [16,48,0.8],[17,50,0.75],[15,52,0.7],
+    [38,65,0.85],[40,68,0.8],[42,70,0.75],
+    [12,78,0.7],[13,80,0.65]
   ],
-  // Solar: southern bias, Helsinki/Tampere/Turku triangle
   solar:[
-    [26,96,0.9],[28,95,0.85],[30,97,0.8], // Helsinki metro
-    [18,88,0.8],[19,87,0.75],[20,89,0.7], // Tampere
-    [12,90,0.75],[13,89,0.7],[11,91,0.65],// Turku
-    [24,92,0.7],[26,93,0.65],[28,94,0.6], // south coast spread
-    [22,85,0.6],[24,83,0.55]              // mid-south
+    [26,96,0.9],[28,95,0.85],[30,97,0.8],
+    [18,88,0.8],[19,87,0.75],[20,89,0.7],
+    [12,90,0.75],[13,89,0.7],[11,91,0.65],
+    [24,92,0.7],[26,93,0.65],[28,94,0.6],
+    [22,85,0.6],[24,83,0.55]
   ]
 };
-
-// Build per-cell target height maps from GEO anchors (Gaussian spread)
-var GEO_SPREAD=8; // grid cells sigma
-function buildTargetMap(anchors){
+var GEO_SPREAD=8;
+function buildGeoMap(anchors){
   var map=new Float32Array(COLS*ROWS);
   for(var i=0;i<cells.length;i++){
-    var c=cells[i][0], r=cells[i][1];
-    var v=0.05; // baseline
+    var c=cells[i][0],r=cells[i][1],v=0.05;
     for(var a=0;a<anchors.length;a++){
-      var dc=c-anchors[a][0], dr=r-anchors[a][1], w=anchors[a][2];
-      v=Math.max(v, w*Math.exp(-(dc*dc+dr*dr)/(2*GEO_SPREAD*GEO_SPREAD)));
+      var dc=c-anchors[a][0],dr=r-anchors[a][1],w=anchors[a][2];
+      v=Math.max(v,w*Math.exp(-(dc*dc+dr*dr)/(2*GEO_SPREAD*GEO_SPREAD)));
     }
     map[r*COLS+c]=v;
   }
   return map;
 }
-var targetMaps={
-  all:null, // built after energy data arrives
-  wind:   buildTargetMap(GEO.wind),
-  nuclear:buildTargetMap(GEO.nuclear),
-  hydro:  buildTargetMap(GEO.hydro),
-  solar:  buildTargetMap(GEO.solar)
+var geoMaps={
+  wind:   buildGeoMap(GEO.wind),
+  nuclear:buildGeoMap(GEO.nuclear),
+  hydro:  buildGeoMap(GEO.hydro),
+  solar:  buildGeoMap(GEO.solar),
+  all:    null // built when energy data arrives
 };
 
-// ── Ripple origin helpers ─────────────────────────────────────────────────────
-// Center of Finland grid
-var CENTER_C=Math.round(COLS*0.45), CENTER_R=Math.round(ROWS*0.5);
-// Mode-specific ripple origins (grid coords)
-var MODE_ORIGIN={
-  all:    [CENTER_C, CENTER_R],
-  wind:   [9, 70],   // Vaasa corridor (west coast)
-  nuclear:[8, 82],   // Olkiluoto
-  hydro:  [20, 15],  // Kemijoki / Lapland
-  solar:  [26, 96]   // Helsinki
-};
+// Active source and its geo map
+var currentSource='all';
+var activeGeoMap=null; // set when data arrives or source changes
 
-// ── Animation state machine ───────────────────────────────────────────────────
-// States: 'load' | 'settling' | 'settled' | 'tap'
-var animState='load';
-var growProgress=new Float32Array(COLS*ROWS); // 0→1 per cell, for smooth grow
-var currentTargetMap=null; // active per-cell target heights
-var tapRecoveryTimer=0;
-var userJustTapped=false;
-
-function applyPhysicsPreset(preset){
-  var pp=PHYSICS[preset];
-  P.damping=pp.damping; P.waveSpeed=pp.wave; P.ripple=pp.ripple; P.maxH=pp.maxH;
-}
-
-function getWaveEnergy(){
-  // Sum of squared velocities — tells us when waves have settled
-  var e=0;
+// Build the staticH[] from activeGeoMap × maxH
+// Called whenever source changes or new data arrives
+function rebuildStaticH(){
+  var map=activeGeoMap;
+  if(!map) return;
   for(var i=0;i<cells.length;i++){
     var idx=cells[i][1]*COLS+cells[i][0];
-    e+=vel[idx]*vel[idx];
+    staticH[idx]=map[idx]*P.maxH;
   }
-  return e/cells.length;
+  // Reset grow so pillars smoothly re-rise to new heights
+  for(var i=0;i<growProg.length;i++) growProg[i]=0;
 }
 
-function triggerLoadRipple(){
-  animState='load';
-  applyPhysicsPreset('load');
-  // Clear existing waves
-  for(var i=0;i<cur.length;i++){cur[i]=0;vel[i]=0;}
-  // Reset grow progress
-  for(var i=0;i<growProgress.length;i++) growProgress[i]=0;
-  // Fire ripple from center
-  var wx=-GRID_W*0.5+CENTER_C*SPACING;
-  var wz=-GRID_D*0.5+CENTER_R*SPACING;
-  addRipple(wx, wz, PHYSICS.load.ripple);
-}
-
-function triggerModeRipple(src){
-  animState='load';
-  applyPhysicsPreset('mode');
-  // Reset grow so pillars re-grow to new mode heights
-  for(var i=0;i<growProgress.length;i++) growProgress[i]=0;
-  var origin=MODE_ORIGIN[src]||MODE_ORIGIN.all;
-  var wx=-GRID_W*0.5+origin[0]*SPACING;
-  var wz=-GRID_D*0.5+origin[1]*SPACING;
-  // Clear waves first for clean ripple
-  for(var i=0;i<cur.length;i++){cur[i]=0;vel[i]=0;}
-  addRipple(wx, wz, PHYSICS.mode.ripple);
-}
-
+// ── Wave engine ───────────────────────────────────────
 function stepWave(){
   var c2=P.waveSpeed*P.waveSpeed;
   for(var r=1;r<ROWS-1;r++) for(var c=1;c<COLS-1;c++){
-    var i=r*COLS+c;if(!inFinland[i])continue;
+    var i=r*COLS+c; if(!inFinland[i]) continue;
     var lap=cur[i+1]+cur[i-1]+cur[i+COLS]+cur[i-COLS]-4*cur[i];
-    vel[i]=(vel[i]+c2*lap)*P.damping;cur[i]+=vel[i];
+    vel[i]=(vel[i]+c2*lap)*P.damping;
+    cur[i]+=vel[i];
   }
 }
-
 function addRipple(wx,wz,force){
   var c=Math.round((wx+GRID_W*0.5)/SPACING);
   var r=Math.round((wz+GRID_D*0.5)/SPACING);
   for(var dr=-4;dr<=4;dr++) for(var dc=-4;dc<=4;dc++){
     var nc=c+dc,nr=r+dr;
-    if(nc<1||nc>=COLS-1||nr<1||nr>=ROWS-1||!inFinland[nr*COLS+nc])continue;
+    if(nc<1||nc>=COLS-1||nr<1||nr>=ROWS-1||!inFinland[nr*COLS+nc]) continue;
     vel[nr*COLS+nc]+=force*Math.exp(-(dc*dc+dr*dr)/5);
   }
+}
+// Trigger ripple from center (load/refresh)
+var CENTER_C=Math.round(COLS*0.45), CENTER_R=Math.round(ROWS*0.5);
+function triggerCenterRipple(){
+  // Don't clear cur[] — just inject velocity so wave starts fresh each time
+  for(var i=0;i<cur.length;i++){cur[i]=0;vel[i]=0;}
+  var wx=-GRID_W*0.5+CENTER_C*SPACING;
+  var wz=-GRID_D*0.5+CENTER_R*SPACING;
+  addRipple(wx,wz,P.rippleForce);
 }
 
 // ════════════════════════════════════════════════════════
@@ -979,43 +945,32 @@ var pDown=false;
 vizRenderer.domElement.addEventListener('pointerdown',function(e){
   pDown=true;
   var p=screenToWorld(e.clientX,e.clientY);
-  if(p){
-    applyPhysicsPreset('tap');
-    animState='tap';
-    tapRecoveryTimer=3.5; // seconds before drifting back to settled
-    addRipple(p.x,p.z,PHYSICS.tap.ripple);
-  }
+  if(p) addRipple(p.x,p.z,P.rippleForce);
   document.getElementById('viz-touch-hint').style.opacity='0';
 });
 vizRenderer.domElement.addEventListener('pointermove',function(e){
-  if(!pDown)return;
+  if(!pDown) return;
   var p=screenToWorld(e.clientX,e.clientY);
-  if(p) addRipple(p.x,p.z,PHYSICS.tap.ripple*0.25);
+  if(p) addRipple(p.x,p.z,P.rippleForce*0.25);
 });
 vizRenderer.domElement.addEventListener('pointerup',function(){pDown=false;});
 vizRenderer.domElement.addEventListener('pointerleave',function(){pDown=false;});
 
-// Source toggle
-var sourceLabels={all:'All Sources',wind:'Wind Power',nuclear:'Nuclear',hydro:'Hydro Power',solar:'Solar'};
-function setSource(src){
-  currentSource=src;
-
-  // Desktop tabs
-  document.querySelectorAll('.source-tab').forEach(function(b){b.classList.toggle('active',b.dataset.src===src);});
-  // Mobile pills
-  document.querySelectorAll('.m-pill').forEach(function(b){b.classList.toggle('active',b.dataset.src===src);});
-  needsColorUpdate=true;
-}
-
-// ── Source toggle (tabs + mobile pills + cards) ───────────────────────────────
+// ── Source toggle ─────────────────────────────────────
 var needsColorUpdate=false;
 function setSource(src){
   currentSource=src;
-  currentTargetMap=targetMaps[src]||targetMaps.all;
-  document.querySelectorAll('.source-tab').forEach(function(b){b.classList.toggle('active',b.dataset.src===src);});
-  document.querySelectorAll('.m-pill').forEach(function(b){b.classList.toggle('active',b.dataset.src===src);});
+  activeGeoMap=geoMaps[src]||geoMaps.all;
+  document.querySelectorAll('.source-tab').forEach(function(b){
+    b.classList.toggle('active',b.dataset.src===src);
+  });
+  document.querySelectorAll('.m-pill').forEach(function(b){
+    b.classList.toggle('active',b.dataset.src===src);
+  });
   needsColorUpdate=true;
-  triggerModeRipple(src);
+  rebuildStaticH();
+  // Ripple from center on mode switch too
+  triggerCenterRipple();
 }
 
 // Wire KPI cards as mode buttons
@@ -1027,91 +982,59 @@ function setSource(src){
   };
   Object.keys(cardMap).forEach(function(id){
     var el=document.getElementById(id);
-    if(!el)return;
+    if(!el) return;
     el.style.cursor='pointer';
-    el.title='Click to view '+cardMap[id]+' mode';
     el.addEventListener('click',function(){setSource(cardMap[id]);});
   });
 })();
 
-// ── Energy wiring ─────────────────────────────────────────────────────────────
+// ── Energy data wiring ────────────────────────────────
 window.applyEnergyTo3D=function(windMW,nuclearMW,solarMW,hydroMW,prodMW,consMW){
   var surplus=prodMW-consMW;
-  // Build 'all' target map weighted by source contributions
+  // Build blended 'all' map weighted by actual production
   var total=Math.max(1,windMW+nuclearMW+solarMW+hydroMW);
   var wW=windMW/total, wN=nuclearMW/total, wH=hydroMW/total, wS=solarMW/total;
   var allMap=new Float32Array(COLS*ROWS);
   for(var i=0;i<cells.length;i++){
     var c=cells[i][0],r=cells[i][1],idx=r*COLS+c;
-    allMap[idx]=
-      wW*targetMaps.wind[idx]+
-      wN*targetMaps.nuclear[idx]+
-      wH*targetMaps.hydro[idx]+
-      wS*targetMaps.solar[idx];
-    if(allMap[idx]<0.05) allMap[idx]=0.05;
+    var v=wW*geoMaps.wind[idx]+wN*geoMaps.nuclear[idx]+
+          wH*geoMaps.hydro[idx]+wS*geoMaps.solar[idx];
+    allMap[idx]=Math.max(0.05,v);
   }
-  targetMaps.all=allMap;
-  // Update current map if in 'all' mode
-  if(currentSource==='all') currentTargetMap=allMap;
-  // Fire load/refresh ripple
-  triggerLoadRipple();
+  geoMaps.all=allMap;
+  if(currentSource==='all') activeGeoMap=allMap;
+  rebuildStaticH();
+  triggerCenterRipple();
 };
 
-// ── Render loop ───────────────────────────────────────────────────────────────
+// ── Render loop ───────────────────────────────────────
 var clock=new THREE.Clock();
-// Start with load ripple on page load
-triggerLoadRipple();
-// Default target map (flat until data arrives)
-currentTargetMap=new Float32Array(COLS*ROWS);
-for(var i=0;i<cells.length;i++) currentTargetMap[cells[i][1]*COLS+cells[i][0]]=0.5;
 
-var SETTLE_THRESHOLD=0.00002; // wave energy below this = settled
+// Kick off initial ripple
+triggerCenterRipple();
 
 function vizLoop(){
   requestAnimationFrame(vizLoop);
   var dt=Math.min(clock.getDelta(),0.05);
+  var growRate=dt/GROW_DURATION;
 
-  // ── Step wave physics ──
+  // Step wave physics
   for(var s=0;s<3;s++) stepWave();
-
-  var waveEnergy=getWaveEnergy();
-  var isSettled=waveEnergy<SETTLE_THRESHOLD;
-
-  // ── State transitions ──
-  if(animState==='load' && isSettled){
-    animState='settling';
-    applyPhysicsPreset('settled');
-  }
-  if(animState==='tap'){
-    tapRecoveryTimer-=dt;
-    if(tapRecoveryTimer<=0){
-      animState='settling';
-      applyPhysicsPreset('settled');
-    }
-  }
-
-  // ── Grow pillars toward target (parallel with waves — islands from ocean) ──
-  var growing=(animState==='settling'||animState==='settled'||animState==='load');
-  var growRate=dt/GROW_DURATION; // fraction per second
 
   if(needsColorUpdate){needsColorUpdate=false;pillars.instanceColor.needsUpdate=true;}
 
   for(var i=0;i<cells.length;i++){
     var c=cells[i][0], r=cells[i][1], idx=r*COLS+c;
-    var wave=cur[idx];
-    var targetH=currentTargetMap?currentTargetMap[idx]*P.maxH:P.maxH*0.5;
 
-    // Grow progress advances always (islands emerge through waves)
-    if(growing && growProgress[idx]<1){
-      growProgress[idx]=Math.min(1, growProgress[idx]+growRate);
-    }
-    // Ease: smooth cubic
-    var ease=growProgress[idx]*growProgress[idx]*(3-2*growProgress[idx]);
-    var baseH=targetH*ease;
+    // Layer 1: grow static height independently of waves
+    if(growProg[idx]<1) growProg[idx]=Math.min(1,growProg[idx]+growRate);
+    var ease=growProg[idx]*growProg[idx]*(3-2*growProg[idx]);
+    var base=staticH[idx]*ease;
 
-    // Wave displacement sits on top of base height
-    var finalH=baseH+wave*P.maxH*0.5;
-    setPillar(i,c,r,Math.max(0.008,finalH));
+    // Layer 2: wave is purely additive on top
+    var wave=cur[idx]*P.maxH*0.6;
+
+    setPillar(i,c,r,Math.max(0.008, base+wave));
   }
 
   pillars.instanceMatrix.needsUpdate=true;
@@ -1119,7 +1042,6 @@ function vizLoop(){
   vizRenderer.render(scene,vizCamera);
 }
 
-// Init
 fitOrthoCamera();
 vizLoop();
 applyLayout();
