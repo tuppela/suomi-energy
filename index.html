@@ -123,6 +123,11 @@ html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);color:var(
 /* Cross-border cards — no border, plain */
 .kpi.teal,.kpi.indigo,.kpi.pink{border:none;background:#f2f2f2;}
 .kpi.teal .kpi-value,.kpi.indigo .kpi-value,.kpi.pink .kpi-value{color:#4d4d4d;}
+.kpi.active-mode {
+  background: #ffffff !important;
+  border: 2px solid #0000ff !important;
+  box-shadow: 0 4px 5px rgba(0,0,0,0.15) !important;
+}
 .chart-card{background:#f2f2f2;border:none;border-radius:6px;padding:16px;margin-bottom:12px;}
 .chart-title{font-family:'Finlandica',sans-serif;font-size:12px;font-weight:700;margin-bottom:2px;}
 .chart-sub{font-size:9px;color:var(--muted);margin-bottom:14px;letter-spacing:.3px;}
@@ -263,6 +268,13 @@ footer{font-size:9px;color:var(--muted);letter-spacing:1px;text-transform:upperc
   .kpi-value { font-size: 22px; }
   .chart-card { padding: 12px; margin-bottom: 10px; }
 
+  /* Mobile: stack chart pair vertically, Wind & Solar first */
+  #chart-pair {
+    grid-template-columns: 1fr !important;
+  }
+  #chart-pair .chart-card:first-child { order: 2; }
+  #chart-pair .chart-card:last-child  { order: 1; }
+
   /* Viz overlays adjust on mobile */
   #viz-labels { bottom: 100px; }
   #viz-touch-hint { display: none; }
@@ -358,6 +370,10 @@ footer{font-size:9px;color:var(--muted);letter-spacing:1px;text-transform:upperc
           <div class="kpi consumption"><div class="kpi-label">Consumption</div><div class="kpi-value" id="kpiConsumption">—</div><div class="kpi-unit">MW latest</div></div>
           <div id="kpiCardNuclear" class="kpi"><div class="kpi-label">Nuclear</div><div class="kpi-value" id="kpiNuclear">—</div><div class="kpi-unit">MW</div></div>
           <div id="kpiCardWind" class="kpi"><div class="kpi-label">Wind</div><div class="kpi-value" id="kpiWind">—</div><div class="kpi-unit">MW</div></div>
+          <div id="kpiCardHydro" class="kpi"><div class="kpi-label">Hydro</div><div class="kpi-value" id="kpiHydro">—</div><div class="kpi-unit">MW</div></div>
+          <div id="kpiCardSolar" class="kpi"><div class="kpi-label">Solar</div><div class="kpi-value" id="kpiSolar">—</div><div class="kpi-unit">MW</div></div>
+          <div class="kpi"><div class="kpi-label">CHP District</div><div class="kpi-value" id="kpiChpD">—</div><div class="kpi-unit">MW</div></div>
+          <div class="kpi"><div class="kpi-label">CHP Industry</div><div class="kpi-value" id="kpiChpI">—</div><div class="kpi-unit">MW</div></div>
         </div>
 
         <div class="kpi-row" style="margin-bottom:16px;">
@@ -380,7 +396,7 @@ footer{font-size:9px;color:var(--muted);letter-spacing:1px;text-transform:upperc
           <canvas class="chart" id="mainChart"></canvas>
         </div>
 
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+        <div id="chart-pair" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
           <div class="chart-card" style="margin:0;">
             <div class="chart-title">Energy Mix</div>
             <div class="chart-sub">Avg production share</div>
@@ -866,7 +882,7 @@ function fitOrthoCamera(){
   var sheetPeek = (window.innerWidth <= 768) ? 88 : 0;
   var visibleH = H - sheetPeek; // visible vertical space above the sheet
   var aspect = W / Math.max(1, visibleH);
-  var pad = 1.08;
+  var pad = (window.innerWidth <= 768) ? 1.22 : 1.08;
   var gAspect = GRID_W / GRID_D;
   var hw, hh;
   if(aspect > gAspect){ hh=(GRID_D/2)*pad; hw=hh*aspect; }
@@ -971,6 +987,7 @@ function setSource(src){
   rebuildStaticH();
   // Ripple from center on mode switch too
   triggerCenterRipple();
+  updateActiveCard(src);
 }
 
 // Wire KPI cards as mode buttons
@@ -978,7 +995,9 @@ function setSource(src){
   var cardMap={
     'kpiCardProduction':'all',
     'kpiCardNuclear':'nuclear',
-    'kpiCardWind':'wind'
+    'kpiCardWind':'wind',
+    'kpiCardHydro':'hydro',
+    'kpiCardSolar':'solar'
   };
   Object.keys(cardMap).forEach(function(id){
     var el=document.getElementById(id);
@@ -987,6 +1006,13 @@ function setSource(src){
     el.addEventListener('click',function(){setSource(cardMap[id]);});
   });
 })();
+
+function updateActiveCard(src){
+  var cardMap={all:'kpiCardProduction',nuclear:'kpiCardNuclear',wind:'kpiCardWind',hydro:'kpiCardHydro',solar:'kpiCardSolar'};
+  document.querySelectorAll('.kpi').forEach(function(el){el.classList.remove('active-mode');});
+  var activeId=cardMap[src];
+  if(activeId){var el=document.getElementById(activeId);if(el)el.classList.add('active-mode');}
+}
 
 // ── Energy data wiring ────────────────────────────────
 window.applyEnergyTo3D=function(windMW,nuclearMW,solarMW,hydroMW,prodMW,consMW){
@@ -1012,6 +1038,8 @@ var clock=new THREE.Clock();
 
 // Kick off initial ripple
 triggerCenterRipple();
+// Mark Production card as active by default
+setTimeout(function(){updateActiveCard('all');},100);
 
 function vizLoop(){
   requestAnimationFrame(vizLoop);
@@ -1149,6 +1177,10 @@ async function fetchAll(){
     document.getElementById('kpiProduction').textContent=fmt(lat(Prod));
     document.getElementById('kpiNuclear').textContent=fmt(lat(N));
     document.getElementById('kpiWind').textContent=fmt(lat(W));
+    document.getElementById('kpiHydro').textContent=fmt(lat(H));
+    document.getElementById('kpiSolar').textContent=fmt(lat(S));
+    document.getElementById('kpiChpD').textContent=fmt(lat(CD_));
+    document.getElementById('kpiChpI').textContent=fmt(lat(CI));
     const fL=v=>v==null?'—':v>0?'+'+Math.abs(Math.round(v)).toLocaleString():'-'+Math.abs(Math.round(v)).toLocaleString();
     const fD=(v,e,i)=>v==null?'MW':v>0?`MW → ${e}`:v<0?`MW ← ${i}`:'MW balanced';
     const lSC=lat(SC),lSN=lat(SN),lEE=lat(EE),lNI=lat(NI);
